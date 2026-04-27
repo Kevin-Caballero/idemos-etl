@@ -185,6 +185,14 @@ function parseSteps(raw: string | undefined): ParsedStep[] {
       continue;
     }
 
+    // Skip bare lines that are clearly continuation fragments:
+    // - start with a digit (e.g. "30/10/2024 que fue suspendida...")
+    // - start with a lowercase letter (e.g. "de 04/11/2024, el Senado co...")
+    if (/^[\d]/.test(line) || /^[a-záéíóúüñ]/u.test(line)) {
+      i++;
+      continue;
+    }
+
     steps.push({
       stepType: line,
       description: line,
