@@ -6,7 +6,7 @@ Servicio encargado de mantener la base de datos actualizada con las iniciativas 
 
 El Congreso publica los datos en [opendata](https://www.congreso.es/es/opendata/iniciativas) como dos JSON (Proyectos de Ley + Proposiciones). El problema es que el nombre del fichero cambia con cada publicación, asi que hay que hacer scraping de la página para encontrar la URL actualizada antes de descargarlo.
 
-Una vez descargado, los datos vienen bastante sucios: fechas en `DD/MM/YYYY`, legislaturas como `Leg.15`, fases de tramitación como texto libre multilínea... El servicio lo limpia todo y hace upsert en la base de datos (actualiza si ya existe, inserta si es nuevo). Solo procesa la legislatura más reciente del dataset.
+Una vez descargado, los datos vienen bastante sucios: fechas en `DD/MM/YYYY`, legislaturas como `Leg.15`, fases de tramitación como texto libre multilínea... El servicio lo limpia todo (o lo intenta) y hace upsert en la base de datos (actualiza si ya existe, inserta si es nuevo). Solo procesa la legislatura más reciente del dataset.
 
 Cada ejecución queda registrada en `sync_log` con estado, contadores y mensaje de error si algo falla.
 
@@ -31,18 +31,38 @@ src/
 
 ## Variables de entorno
 
-| Variable       | Default                 |
-| -------------- | ----------------------- |
-| `DB_HOST`      | `localhost`             |
-| `DB_PORT`      | `5432`                  |
-| `DB_NAME`      | `idemos`                |
-| `DB_USER`      | `postgres`              |
-| `DB_PASSWORD`  | `postgres`              |
-| `RABBITMQ_URL` | `amqp://localhost:5672` |
+| Variable       | Por defecto             | Descripción                                   |
+| -------------- | ----------------------- | --------------------------------------------- |
+| `DB_HOST`      | `localhost`             | Host de PostgreSQL                            |
+| `DB_PORT`      | `5432`                  | Puerto de PostgreSQL                          |
+| `DB_NAME`      | `idemos`                | Nombre de la base de datos                    |
+| `DB_USER`      | `postgres`              | Usuario de PostgreSQL                         |
+| `DB_PASSWORD`  | `postgres`              | Contraseña de PostgreSQL                      |
+| `RABBITMQ_URL` | `amqp://localhost:5672` | URL de conexión a RabbitMQ                    |
+| `NODE_ENV`     | —                       | `development` activa `synchronize` en TypeORM |
 
-## Desarrollo
+## Required versions
+
+| Tool / Package          | Version |
+| ----------------------- | ------- |
+| Node.js                 | >= 20.0 |
+| npm                     | >= 10.0 |
+| TypeScript              | ^5.7.3  |
+| NestJS (`@nestjs/core`) | ^11.0.1 |
+| TypeORM                 | ^0.3.20 |
+| `@nestjs/typeorm`       | ^11.0.0 |
+| `@nestjs/schedule`      | ^4.1.2  |
+| `@nestjs/microservices` | ^11.0.1 |
+| PostgreSQL (`pg`)       | ^8.13.3 |
+| RxJS                    | ^7.8.1  |
+
+> Node.js 20+ is required for native `.env` file loading via `--env-file`.
+
+## Scripts
 
 ```bash
-npm install
-npm run start:dev
+npm run start:dev   # development (watch mode)
+npm run start:prod  # production
+npm run test        # unit tests
+npm run test:e2e    # e2e tests
 ```
