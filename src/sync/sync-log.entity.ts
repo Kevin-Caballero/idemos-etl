@@ -2,6 +2,11 @@ import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 
 export type SyncStatus = 'pending' | 'success' | 'error';
 
+/**
+ * Registro de auditoría de cada ejecución del pipeline de sincronización.
+ * Permite consultar el historial de syncs, detectar fallos recurrentes
+ * y determinar si es necesario ejecutar un sync en el arranque del servicio.
+ */
 @Entity('sync_log')
 export class SyncLog {
   @PrimaryGeneratedColumn('uuid')

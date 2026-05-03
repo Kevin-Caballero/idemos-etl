@@ -1,3 +1,8 @@
+/**
+ * Estructura de un registro crudo tal como lo devuelve el open data del Congreso de los Diputados.
+ * Los nombres de campo están en mayúsculas y en castellano porque provienen directamente del JSON
+ * público de congreso.es sin transformación previa.
+ */
 export interface CongresoRawRecord {
   LEGISLATURA: string;
   SUPERTIPO: string;

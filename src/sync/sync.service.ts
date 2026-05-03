@@ -19,6 +19,11 @@ import { CongresoService } from '../congreso/congreso.service.js';
 import type { CongresoRawRecord } from '../congreso/congreso.types.js';
 import { SyncLog } from './sync-log.entity.js';
 
+/**
+ * Resultado de una ejecución del pipeline de sincronización.
+ * Permite al caller y al log conocer el impacto exacto de cada sync
+ * sin necesidad de consultar la base de datos.
+ */
 export interface SyncResult {
   inserted: number;
   updated: number;
@@ -39,6 +44,11 @@ interface ParsedLink {
   url: string;
 }
 
+/**
+ * Parsea una fecha en formato DD/MM/YYYY y la convierte a un objeto Date UTC.
+ * Retorna null si la cadena está vacía o no coincide con el formato esperado,
+ * evitando que un campo de fecha inválido interrumpa el procesamiento del registro.
+ */
 function parseDDMMYYYY(str: string | undefined): Date | null {
   if (!str?.trim()) return null;
   const match = str.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
@@ -48,6 +58,11 @@ function parseDDMMYYYY(str: string | undefined): Date | null {
   return isNaN(d.getTime()) ? null : d;
 }
 
+/**
+ * Convierte un número entero a su representación en números romanos.
+ * Se usa para mostrar el número de legislatura en formato convencional español
+ * (p. ej. "Leg.15" → "XV").
+ */
 function toRoman(n: number): string {
   const vals = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1];
   const syms = [
@@ -75,17 +90,36 @@ function toRoman(n: number): string {
   return result;
 }
 
+/**
+ * Convierte el código de legislatura del formato interno del Congreso ("Leg.15")
+ * a numeración romana ("XV"), que es la representación convencional usada en
+ * documentos parlamentarios y en la interfaz de la aplicación.
+ * Si el formato no coincide se devuelve el valor original como fallback.
+ */
 function convertLegislatura(raw: string): string {
   const match = raw.match(/Leg\.(\d+)/i);
   if (!match) return raw;
   return toRoman(parseInt(match[1], 10));
 }
 
+/**
+ * Extrae el número ordinal de la legislatura del campo LEGISLATURA
+ * (p. ej. "Leg.15" → 15). Se usa para filtrar registros por legislatura
+ * y para construir las URLs de detalle de congreso.es.
+ * Retorna null si el campo no contiene el patrón esperado.
+ */
 function extractLegNum(raw: string): number | null {
   const match = raw.match(/Leg\.(\d+)/i);
   return match ? parseInt(match[1], 10) : null;
 }
 
+/**
+ * Determina la legislatura en curso buscando el número de legislatura
+ * más alto entre todos los registros descargados. El dataset del Congreso
+ * incluye iniciativas de legislaturas anteriores; filtrando solo por la
+ * máxima se evita procesar datos históricos irrelevantes y se mantiene
+ * el volumen de inserciones en cada sync dentro de límites razonables.
+ */
 function detectCurrentLegislature(
   records: import('../congreso/congreso.types.js').CongresoRawRecord[],
 ): number | null {
@@ -97,12 +131,25 @@ function detectCurrentLegislature(
   return max;
 }
 
+/**
+ * Clasifica el tipo de iniciativa a partir del campo TIPO del dataset.
+ * El campo puede contener variantes como "Proposición de Ley" o "Proposiciones
+ * de Ley No de Ley", por lo que se usa una búsqueda parcial case-insensitive
+ * en lugar de una comparación exacta. Cualquier tipo que no contenga
+ * "proposici" se trata como Proyecto de Ley (rama del ejecutivo).
+ */
 function classifyType(tipo: string): InitiativeType {
   const lower = tipo.toLowerCase();
   if (lower.includes('proposici')) return InitiativeType.Proposicion;
   return InitiativeType.Proyecto;
 }
 
+/**
+ * Normaliza campos de texto libre (título, autor, tipo de tramitación…).
+ * El dataset crudo contiene saltos de línea embebidos y espacios múltiples
+ * que deben colapsarse a un único espacio para almacenarlos como texto plano
+ * en la base de datos y mostrarlos correctamente en la UI.
+ */
 function cleanText(raw: string | undefined): string {
   if (!raw) return '';
   return raw
@@ -111,6 +158,12 @@ function cleanText(raw: string | undefined): string {
     .trim();
 }
 
+/**
+ * Normaliza el campo SITUACIONACTUAL, que puede contener múltiples líneas
+ * cuando la iniciativa ha pasado por varias fases simultáneas. A diferencia
+ * de cleanText, los saltos de línea se sustituyen por " — " para conservar
+ * la separación semántica entre estados cuando se muestra en la interfaz.
+ */
 function cleanStatus(raw: string): string {
   return raw
     .replace(/\n/g, ' — ')
@@ -118,6 +171,13 @@ function cleanStatus(raw: string): string {
     .trim();
 }
 
+/**
+ * Extrae la fecha de cierre de una iniciativa del campo RESULTADOTRAMITACION.
+ * Ese campo es texto libre con frases como "Aprobada con modificaciones el
+ * 12/03/2024", por lo que se extraen todas las fechas DD/MM/YYYY presentes
+ * y se toma la última, que corresponde al acto final de la tramitación.
+ * Si no hay ninguna fecha el campo se deja como null (iniciativa en curso).
+ */
 function parseClosedAt(resultadoText: string | undefined): Date | null {
   if (!resultadoText) return null;
   const matches = resultadoText.match(/(\d{2}\/\d{2}\/\d{4})/g);
@@ -125,6 +185,13 @@ function parseClosedAt(resultadoText: string | undefined): Date | null {
   return parseDDMMYYYY(matches[matches.length - 1]);
 }
 
+/**
+ * Parsea la sección de tramitación seguida de un registro del Congreso.
+ * El formato es texto multilínea con patrones irregulares; esta función
+ * aplica un parser línea a línea con heurísticas para emparejar cada paso
+ * con sus fechas de inicio y fin. Se descartan líneas que son continuaciones
+ * de texto (comienzan por dígito o minúscula) para evitar entradas corruptas.
+ */
 function parseSteps(raw: string | undefined): ParsedStep[] {
   if (!raw?.trim()) return [];
 
@@ -206,6 +273,11 @@ function parseSteps(raw: string | undefined): ParsedStep[] {
   return steps;
 }
 
+/**
+ * Extrae los enlaces documentales (BOCG y Diario de Sesiones) de los campos
+ * de texto multilínea del registro crudo. Filtra únicamente las líneas que
+ * comienzan por "http" para ignorar referencias textuales sin URL.
+ */
 function parseLinks(
   bocgText: string | undefined,
   dsText: string | undefined,
@@ -233,6 +305,15 @@ function parseLinks(
   return links;
 }
 
+/**
+ * Orquesta el pipeline ETL completo: descarga los datasets del Congreso,
+ * filtra a la legislatura actual, y persiste cada registro con upsert
+ * (insert si es nuevo, update de campos volátiles si ya existe).
+ * Se ejecuta automáticamente al arrancar (si no se syncó hoy) y mediante
+ * un cron diario a las 6:00 UTC. Registra el resultado en `sync_log`
+ * y notifica al servicio AI para que genere los resúmenes pendientes.
+ * El flag `running` previene ejecuciones solapadas.
+ */
 @Injectable()
 export class SyncService implements OnApplicationBootstrap {
   private readonly logger = new Logger(SyncService.name);
@@ -369,6 +450,23 @@ export class SyncService implements OnApplicationBootstrap {
     }
   }
 
+  /**
+   * Transforma un registro crudo del Congreso y lo persiste con estrategia upsert:
+   *
+   * 1. Parseo y validación: descarta el registro si FECHAPRESENTACION es inválida,
+   *    ya que es un campo obligatorio en el modelo de dominio.
+   * 2. Clasificación: determina el tipo (Proyecto/Proposición), limpia campos de
+   *    texto libre y convierte el formato de legislatura a numeración romana.
+   * 3. Upsert de la iniciativa: si ya existe (por NUMEXPEDIENTE como clave natural)
+   *    solo actualiza los campos volátiles (estado, fechas, comisión, título);
+   *    los campos estructurales (tipo, autor, fuente) permanecen inmutables.
+   * 4. Reemplazo completo de pasos y enlaces: se borran y reinsertan en cada sync
+   *    para reflejar fielmente el estado actual sin acumular duplicados.
+   * 5. Enlace canónico: siempre se añade la URL de detalle de congreso.es como
+   *    primer enlace de tipo OTHER, independientemente de los BOCG/DS presentes.
+   *
+   * Retorna true si se insertó un registro nuevo, false si fue una actualización.
+   */
   private async processRecord(record: CongresoRawRecord): Promise<boolean> {
     const presentedAt = parseDDMMYYYY(record.FECHAPRESENTACION);
     if (!presentedAt) return false;

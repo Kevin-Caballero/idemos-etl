@@ -1,6 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { CongresoRawRecord } from './congreso.types.js';
 
+/**
+ * Servicio de acceso al open data del Congreso de los Diputados.
+ * Descubre dinámicamente las URLs de los ficheros JSON desde la página de índice
+ * para adaptarse automáticamente a los cambios de nombre de fichero entre legislaturas.
+ * Obtiene los dos conjuntos de datos (Proyectos de Ley y Proposiciones de Ley)
+ * en paralelo para reducir el tiempo de descarga.
+ */
 @Injectable()
 export class CongresoService {
   private readonly logger = new Logger(CongresoService.name);
