@@ -3,7 +3,7 @@ FROM node:22-alpine AS common-builder
 RUN apk add --no-cache git
 WORKDIR /packages/common
 RUN git clone https://github.com/Kevin-Caballero/idemos-common.git .
-RUN npm ci && npm run build
+RUN npm install && npm run build
 
 # ── Stage 2: Build etl ───────────────────────────────────────────────────────
 FROM node:22-alpine AS builder
@@ -11,7 +11,7 @@ WORKDIR /packages/common
 COPY --from=common-builder /packages/common .
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 COPY . .
 RUN npm run build
 
