@@ -11,7 +11,7 @@ import { SyncModule } from './sync/sync.module.js';
     TypeOrmModule.forRoot({
       type: 'postgres',
       host: process.env.DB_HOST ?? 'localhost',
-      port: Number(process.env.DB_PORT ?? '5432'),
+      port: Number(process.env.DB_PORT ?? '15432'),
       database: process.env.DB_NAME ?? 'idemos',
       username: process.env.DB_USER ?? 'postgres',
       password: process.env.DB_PASSWORD ?? 'postgres',
@@ -23,7 +23,7 @@ import { SyncModule } from './sync/sync.module.js';
         name: 'AI_SERVICE',
         transport: Transport.RMQ,
         options: {
-          urls: [process.env.RABBITMQ_URL ?? 'amqp://localhost:5672'],
+          urls: [process.env.RABBITMQ_URL ?? 'amqp://localhost:15672'],
           queue: 'ai_queue',
           queueOptions: { durable: true },
         },
