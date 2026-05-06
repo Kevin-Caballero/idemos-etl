@@ -6,8 +6,10 @@ import {
   InitiativeStep,
   InitiativeLink,
   InitiativeSummary,
+  OfficialVoteResult,
 } from '@idemos/common';
 import { CongresoModule } from '../congreso/congreso.module.js';
+import { VotacionesModule } from '../votaciones/votaciones.module.js';
 import { SyncService } from './sync.service.js';
 import { SyncLog } from './sync-log.entity.js';
 
@@ -18,6 +20,7 @@ import { SyncLog } from './sync-log.entity.js';
       InitiativeStep,
       InitiativeLink,
       InitiativeSummary,
+      OfficialVoteResult,
       SyncLog,
     ]),
     ClientsModule.register([
@@ -32,6 +35,7 @@ import { SyncLog } from './sync-log.entity.js';
       },
     ]),
     CongresoModule,
+    VotacionesModule,
   ],
   providers: [SyncService],
   exports: [SyncService],

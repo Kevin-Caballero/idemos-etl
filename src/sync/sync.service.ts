@@ -14,9 +14,11 @@ import {
   InitiativeStep,
   InitiativeLink,
   LinkType,
+  OfficialVoteResult,
 } from '@idemos/common';
 import { CongresoService } from '../congreso/congreso.service.js';
 import type { CongresoRawRecord } from '../congreso/congreso.types.js';
+import { VotacionesService } from '../votaciones/votaciones.service.js';
 import { SyncLog } from './sync-log.entity.js';
 
 /**
@@ -321,12 +323,15 @@ export class SyncService implements OnApplicationBootstrap {
 
   constructor(
     private readonly congresoService: CongresoService,
+    private readonly votacionesService: VotacionesService,
     @InjectRepository(Initiative)
     private readonly initiativeRepo: Repository<Initiative>,
     @InjectRepository(InitiativeStep)
     private readonly stepRepo: Repository<InitiativeStep>,
     @InjectRepository(InitiativeLink)
     private readonly linkRepo: Repository<InitiativeLink>,
+    @InjectRepository(OfficialVoteResult)
+    private readonly voteResultRepo: Repository<OfficialVoteResult>,
     @InjectRepository(SyncLog)
     private readonly syncLogRepo: Repository<SyncLog>,
     @Inject('AI_SERVICE')
@@ -360,7 +365,66 @@ export class SyncService implements OnApplicationBootstrap {
       this.logger.log(
         `Last sync was today (${lastSyncDate}) — skipping startup sync`,
       );
+
+      // Even when skipping the main sync, run vote results sync if the table is
+      // empty. This covers the case where syncVoteResults was added after a
+      // successful main sync had already been recorded for today.
+      const voteCount = await this.voteResultRepo.count();
+      if (voteCount === 0) {
+        this.logger.log(
+          'official_vote_results table is empty — running vote results sync',
+        );
+        const legNumber = await this.detectLegFromDb();
+        if (legNumber !== null) {
+          await this.syncVoteResults(legNumber);
+        } else {
+          this.logger.warn(
+            'Could not determine current legislature from DB — skipping vote sync',
+          );
+        }
+      }
     }
+  }
+
+  /**
+   * Determines the current legislature number from the initiatives already in
+   * the database. Avoids a full HTTP fetch when only the vote sync is needed.
+   * Initiatives store legislature in Roman numerals (e.g. "XV") via
+   * convertLegislatura; we convert back to get the ordinal number.
+   */
+  private async detectLegFromDb(): Promise<number | null> {
+    // Query distinct legislature values and pick the largest ordinal
+    const rows = await this.initiativeRepo
+      .createQueryBuilder('i')
+      .select('DISTINCT i.legislature', 'leg')
+      .getRawMany<{ leg: string }>();
+
+    // toRoman output: "XV" for 15, etc. Parse back to number
+    const fromRoman = (s: string): number => {
+      const map: Record<string, number> = {
+        I: 1,
+        V: 5,
+        X: 10,
+        L: 50,
+        C: 100,
+        D: 500,
+        M: 1000,
+      };
+      let n = 0;
+      for (let i = 0; i < s.length; i++) {
+        const cur = map[s[i]] ?? 0;
+        const next = map[s[i + 1]] ?? 0;
+        n += cur < next ? -cur : cur;
+      }
+      return n;
+    };
+
+    let max: number | null = null;
+    for (const row of rows) {
+      const n = fromRoman(row.leg);
+      if (n > 0 && (max === null || n > max)) max = n;
+    }
+    return max;
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_6AM)
@@ -433,6 +497,12 @@ export class SyncService implements OnApplicationBootstrap {
       this.logger.log(
         `Sync complete — inserted: ${inserted}, updated: ${updated}, failed: ${failed}`,
       );
+
+      // Sync official vote results from the votaciones open data.
+      // Runs after the initiative upsert so all expedientes exist in the DB.
+      if (currentLeg !== null) {
+        await this.syncVoteResults(currentLeg);
+      }
 
       this.aiClient.emit('sync.completed', {});
       this.logger.log('Notified AI service to generate pending summaries.');
@@ -552,5 +622,63 @@ export class SyncService implements OnApplicationBootstrap {
     await this.linkRepo.save(links);
 
     return isNew;
+  }
+
+  /**
+   * Sincroniza los resultados oficiales de votación plenaria para todas las
+   * iniciativas 121/122 de la legislatura actual.
+   *
+   * Por cada resultado encontrado en congreso.es se hace un upsert:
+   *  - Si la iniciativa existe en la BD se crea o actualiza su OfficialVoteResult.
+   *  - Si no existe (expediente no en la BD) se omite sin error.
+   */
+  private async syncVoteResults(legNumber: number): Promise<void> {
+    this.logger.log('Starting official vote results sync…');
+    try {
+      const votes = await this.votacionesService.fetchAllVotes(legNumber);
+
+      if (votes.length === 0) {
+        this.logger.warn('No vote results found — skipping upsert');
+        return;
+      }
+
+      let upserted = 0;
+      let skipped = 0;
+
+      for (const vote of votes) {
+        // The votaciones page returns short expedientes like "122/000262",
+        // but the DB stores them with a trailing "/0000" suffix from the
+        // Congreso JSON dataset (e.g. "122/000262/0000").
+        const expedienteDb = `${vote.expediente}/0000`;
+        const initiative = await this.initiativeRepo.findOne({
+          where: { expediente: expedienteDb },
+          select: ['id'],
+        });
+
+        if (!initiative) {
+          skipped++;
+          continue;
+        }
+
+        await this.voteResultRepo.upsert(
+          {
+            initiativeId: initiative.id,
+            yesCount: vote.afavor,
+            noCount: vote.enContra,
+            abstentionCount: vote.abstenciones,
+            votedAt: vote.fecha,
+          },
+          { conflictPaths: ['initiativeId'] },
+        );
+        upserted++;
+      }
+
+      this.logger.log(
+        `Vote results sync complete — upserted: ${upserted}, skipped (no matching initiative): ${skipped}`,
+      );
+    } catch (err: unknown) {
+      // Non-fatal: log and continue so the main sync result is not affected.
+      this.logger.error(`Vote results sync failed: ${(err as Error).message}`);
+    }
   }
 }
